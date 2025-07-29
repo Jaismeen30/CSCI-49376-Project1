@@ -1,4 +1,5 @@
 from neo4j import GraphDatabase
+from pymongo import MongoClient
 
 
 URI = "bolt://localhost:7687"     
@@ -36,8 +37,7 @@ class Neo4jClient:
             return result.single()
 
 def print_menu():
-    print("\n--- Neo4j CLI ---")
-    print("1. Run a custom Cypher query")
+    print("1. Run a Cypher query")
     print("2. Create sample nodes and relationships")
     print("3. Run built-in Disease ID query")
     print("4. Exit")
