@@ -24,87 +24,47 @@ class Neo4jClient:
     def query_disease_info(self, disease_id):
         query = """
         MATCH (d:Disease {id: $disease_id})
-        OPTIONAL MATCH (t:Compound)-[:CtD]->(d)
-        OPTIONAL MATCH (p:Compound)-[:CpD]->(d)
-        OPTIONAL MATCH (g:Gene)-[:DaG]->(d)
-        OPTIONAL MATCH (d)-[:DlA]->(a:Anatomy)
+        MATCH (t:Compound)-[:CtD]->(d)
+        MATCH (p:Compound)-[:CpD]->(d)
+        OPTIONAL MATCH (d)-[:DaG|DuG|DdG]->(g:Gene)
+        MATCH (d)-[:DlA]->(a:Anatomy)
         RETURN 
-            d.name AS disease_name,
-            collect(DISTINCT t.name) AS treats,
-            collect(DISTINCT p.name) AS palliates,
-            collect(DISTINCT g.name) AS genes,
-            collect(DISTINCT a.name) AS locations
+            d.name AS Disease_name,
+            collect(DISTINCT t.name) AS Treats,
+            collect(DISTINCT p.name) AS Palliates,
+            collect(DISTINCT g.name) AS Genes,
+            collect(DISTINCT a.name) AS Locations
         """
         with self.driver.session() as session:
             result = session.run(query, {"disease_id": disease_id})
             return result.single()
+           
         
-def get_disease_info(disease_id, nodes_collection, edges_collection):
-    disease_doc = nodes_collection.find_one({"_id": disease_id})
-    if not disease_doc:
-        return f"Disease '{disease_id}' not found."
+    def find_compounds(self):
+            query = """
+            MATCH (case1:Compound)-[:CuG]->(g:Gene)<-[:AdG]-(a1:Anatomy)<-[:DlA]-(d:Disease)
+            WHERE NOT ( (case1)-[:CtD]->(d) OR (case1)-[:CpD]->(d) )
+            
+            MATCH (case2:Compound)-[:CdG]->(g:Gene)<-[:AuG]-(a2:Anatomy)<-[:DlA]-(d)
+            WHERE NOT ( (case2)-[:CtD]->(d) OR (case2)-[:CpD]->(d) )
+            
+            RETURN DISTINCT collect(DISTINCT case1.name) + collect(DISTINCT case2.name) AS Compounds
+            """
+            with self.driver.session() as session:
+                result = session.run(query)
+                return  result.single()
+                #return record["Compounds"] if record else []
 
-    disease_name = disease_doc.get("name", "[Unnamed]")
+        
 
-    related_edges = list(edges_collection.find({
-        "$or": [
-            {"source": disease_id},
-            {"target": disease_id}
-        ]
-    }))
-
-    treats = set()
-    palliates = set()
-    genes = set()
-    anatomy = set()
-
-    for edge in related_edges:
-        src = edge["source"]
-        tgt = edge["target"]
-        meta = edge["metaedge"]
-
-        if meta == "CtD" and tgt == disease_id:
-            drug = nodes_collection.find_one({"_id": src})
-            if drug:
-                treats.add(drug.get("name") or src)
-
-        elif meta == "CpD" and tgt == disease_id:
-            drug = nodes_collection.find_one({"_id": src})
-            if drug:
-                palliates.add(drug.get("name") or src)
-
-        elif meta == "DaG" and tgt == disease_id:
-            gene = nodes_collection.find_one({"_id": src})
-            if gene:
-                genes.add(gene.get("name") or src)
-        elif meta == "DuG" and tgt == disease_id:
-            gene = nodes_collection.find_one({"_id": src})
-            if gene:
-                genes.add(gene.get("name") or src)
-
-        elif meta == "DlA" and src == disease_id:
-            anat = nodes_collection.find_one({"_id": tgt})
-            if anat:
-                anatomy.add(anat.get("name") or tgt)
-
-    return {
-        "Disease ID": disease_id,
-        "Name": disease_name,
-        "Treats": sorted(treats),
-        "Palliates": sorted(palliates),
-        "Caused by Genes": sorted(genes),
-        "Occurs in Anatomy": sorted(anatomy)
-    }
 
 
 
 def print_menu():
     print("\n")
-    print("1. Run a Cypher query")
-    print("2. Create sample nodes and relationships")
-    print("3. Get Disease info mongodb")
-    print("4. Get Disease info")
-    print("5. Exit")
+    print("1. Get Disease info")
+    print("2. Compounds that can treat a new disease ")
+    print("3. Exit")
 
 def main():
     
@@ -120,47 +80,28 @@ def main():
     try:
         while True:
             print_menu()
-            choice = input("Choose an option (1-5): ")
+            choice = input("Choose an option (1-3): ")
 
             if choice == "1":
-                query = input("\nEnter your Cypher query:\n> ")
-                results = client.run_query(query)
-                print("\nResults:")
-                for row in results:
-                    print(row)
-
-            elif choice == "2":
-                sample_query = """
-                CREATE (c:Compound {name: 'Aspirin'})-[:CtD]->(d:Disease {name: 'Headache'})
-                """
-                client.run_query(sample_query)
-                print("Sample data created.")
-
-            
-            elif choice == "3":
-                disease_id = input("Enter Disease ID (e.g., Disease::DOID:10763): ")
-                result = get_disease_info(disease_id, nodes_collection, edges_collection)
-                print("\n=== Disease Information (MongoDB) ===")
-                if isinstance(result, dict):
-                    for key, val in result.items():
-                        print(f"{key}: {val}")
-                else:
-                    print(result)
-
-            elif choice == "4":
                 disease_id = input("Enter disease ID (e.g. Disease::DOID:10763): ")
                 result = client.query_disease_info(disease_id)
                 if result:
                     print("\nDisease Info:")
                     for key, value in result.items():
                         print(f"{key}: {value}")
-                        
-            elif choice == "5":
-                print("Goodbye!")
+            elif choice == "2":
+                #print("Compounds:")
+                result = client.find_compounds()
+                if result:
+                    print(result)
+            
+            
+            elif choice == "3":
+                print("Exit")
                 break
 
             else:
-                print("Invalid option. Please choose 1, 2, 3, 4 or 5 ")
+                print("Invalid option. Please choose 1, 2, or 3")
     
     finally:
         client.close()
