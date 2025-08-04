@@ -82,7 +82,6 @@ def find_compounds(db):
 
             # Check for opposite directionality
             if (compound_reg == "CuG" and anat_reg == "AdG") or (compound_reg == "CdG" and anat_reg == "AuG"):
-                for disease_id in anatomy_to_diseases.get(anatomy_id, []):
                     if compound_id not in excluded_compounds:
                         candidate_compounds.add(compound_id)
 
