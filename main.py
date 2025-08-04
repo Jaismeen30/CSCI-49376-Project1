@@ -7,7 +7,7 @@ USERNAME = "neo4j"
 PASSWORD = "Jaismeen30"
 
 MONGO_URI = "mongodb://localhost:27017"
-MONGO_DB = "Project1"
+MONGO_DB = "hetionet"
 
 
 class Neo4jClient:
@@ -17,10 +17,8 @@ class Neo4jClient:
     def close(self):
         self.driver.close()
 
-    def run_query(self, query, parameters=None):
-        with self.driver.session() as session:
-            result = session.run(query, parameters or {})
-            return [record.data() for record in result]
+
+    
     def query_disease_info(self, disease_id):
         query = """
         MATCH (d:Disease {id: $disease_id})
@@ -30,7 +28,7 @@ class Neo4jClient:
         MATCH (d)-[:DlA]->(a:Anatomy)
         RETURN 
             d.name AS Disease_name,
-            collect(DISTINCT t.name) AS Treats,
+            collect(DISTINCT t.name) AS Treatments,
             collect(DISTINCT p.name) AS Palliates,
             collect(DISTINCT g.name) AS Genes,
             collect(DISTINCT a.name) AS Locations
@@ -38,26 +36,64 @@ class Neo4jClient:
         with self.driver.session() as session:
             result = session.run(query, {"disease_id": disease_id})
             return result.single()
-           
-        
-    def find_compounds(self):
-            query = """
-            MATCH (case1:Compound)-[:CuG]->(g:Gene)<-[:AdG]-(a1:Anatomy)<-[:DlA]-(d:Disease)
-            WHERE NOT ( (case1)-[:CtD]->(d) OR (case1)-[:CpD]->(d) )
-            
-            MATCH (case2:Compound)-[:CdG]->(g:Gene)<-[:AuG]-(a2:Anatomy)<-[:DlA]-(d)
-            WHERE NOT ( (case2)-[:CtD]->(d) OR (case2)-[:CpD]->(d) )
-            
-            RETURN DISTINCT collect(DISTINCT case1.name) + collect(DISTINCT case2.name) AS Compounds
-            """
-            with self.driver.session() as session:
-                result = session.run(query)
-                return  result.single()
-                #return record["Compounds"] if record else []
-
         
 
+def find_compounds(db):
+    nodes = db["nodes"]
+    edges = db["edges"]
+    # all compound to gene regulation edges
+    compound_gene_edges = list(edges.find({
+        "metaedge": {"$in": ["CuG", "CdG"]}
+    }))
 
+    # anatomy to gene regulation edges
+    anatomy_gene_edges = list(edges.find({
+        "metaedge": {"$in": ["AdG", "AuG"]}
+    }))
+
+    #Index by gene for quick lookup
+    gene_to_anatomy = {}
+    for edge in anatomy_gene_edges:
+        gene_id = edge["target"]
+        gene_to_anatomy.setdefault(gene_id, []).append(edge)
+
+    #link genes through anatomy to diseases
+    anatomy_to_diseases = {}
+    for edge in edges.find({"metaedge": "DlA"}):
+        anatomy_id = edge["target"]
+        disease_id = edge["source"]
+        anatomy_to_diseases.setdefault(anatomy_id, set()).add(disease_id)
+
+    #exclude known treatments/palliatives
+    excluded_compounds = set(
+        (e["source"]) 
+        for e in edges.find({"metaedge": {"$in": ["CtD", "CpD"]}})
+    )
+    
+    candidate_compounds = set()
+    for edge in compound_gene_edges:
+        compound_id = edge["source"]
+        gene_id = edge["target"]
+        compound_reg = edge["metaedge"]
+
+        for anat_edge in gene_to_anatomy.get(gene_id, []):
+            anatomy_id = anat_edge["source"]
+            anat_reg = anat_edge["metaedge"]
+
+            # Check for opposite directionality
+            if (compound_reg == "CuG" and anat_reg == "AdG") or (compound_reg == "CdG" and anat_reg == "AuG"):
+                for disease_id in anatomy_to_diseases.get(anatomy_id, []):
+                    if compound_id not in excluded_compounds:
+                        candidate_compounds.add(compound_id)
+
+   
+    results = nodes.find({
+        "id": {"$in": list(candidate_compounds)},
+        
+    })
+    return  [doc["name"] for doc in results if "name" in doc]
+
+   
 
 
 def print_menu():
@@ -69,13 +105,11 @@ def print_menu():
 def main():
     
     mongo = MongoClient("mongodb://localhost:27017")
-    db = mongo["Project1"]
-    nodes_collection = db["nodes"]
-    edges_collection = db["edges"]
-    client = Neo4jClient(URI, USERNAME, PASSWORD)
-    for edge in edges_collection.find({"metaedge": "DuG", "target": "Disease::DOID:10763"}):
-        print(edge)
-
+    db = mongo["hetionet"]
+    nodes = db["nodes"]
+    edges = db["edges"]
+    
+    client = Neo4jClient(URI, USERNAME, PASSWORD) 
 
     try:
         while True:
@@ -88,14 +122,18 @@ def main():
                 if result:
                     print("\nDisease Info:")
                     for key, value in result.items():
-                        print(f"{key}: {value}")
+                        if isinstance(value, list):
+                            print(f"{key}:\n  {', '.join(str(v) for v in value)}\n")
+                        else:
+                            print(f"{key}: {value}\n")
+
             elif choice == "2":
-                #print("Compounds:")
-                result = client.find_compounds()
+                result = find_compounds(db)
                 if result:
-                    print(result)
-            
-            
+                    print("Compounds that can treat new diseases:")
+                    for name in result:
+                        print(f"- {name}")
+                    
             elif choice == "3":
                 print("Exit")
                 break
