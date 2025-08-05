@@ -22,10 +22,10 @@ class Neo4jClient:
     def query_disease_info(self, disease_id):
         query = """
         MATCH (d:Disease {id: $disease_id})
-        MATCH (t:Compound)-[:CtD]->(d)
-        MATCH (p:Compound)-[:CpD]->(d)
+        OPTIONAL MATCH (t:Compound)-[:CtD]->(d)
+        OPTIONAL MATCH (p:Compound)-[:CpD]->(d)
         OPTIONAL MATCH (d)-[:DaG|DuG|DdG]->(g:Gene)
-        MATCH (d)-[:DlA]->(a:Anatomy)
+        OPTIONAL MATCH (d)-[:DlA]->(a:Anatomy)
         RETURN 
             d.name AS Disease_name,
             collect(DISTINCT t.name) AS Treatments,
